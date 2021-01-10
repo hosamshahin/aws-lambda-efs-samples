@@ -32,11 +32,8 @@ Resources:
   FileSystemResource:
     Type: AWS::EFS::FileSystem
     Properties:
-      PerformanceMode: maxIO
-      Encrypted: true
-      FileSystemTags:
-        - Key: Name
-          Value: TestFileSystem
+      ProvisionedThroughputInMibps: 10
+      ThroughputMode: provisioned
       FileSystemPolicy:
         Version: "2012-10-17"
         Statement:
@@ -118,6 +115,88 @@ Resources:
                 - elasticfilesystem:ClientWrite
                 - elasticfilesystem:DescribeMountTargets
               Resource: "*"
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: covid_build
+      Description: Build covid xray conda environment
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
+        EnvironmentVariables:
+          - Name: BUILD_OUTPUT_BUCKET
+            Value: !Ref BuildArtifactsBucket
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: CODEPIPELINE
+
+  CodeBuildProjectRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+        Version: "2012-10-17"
+
+  LambdaEFSMLCodeBuildProject41BA57A0:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: lambci/lambda:build-python3.8
+        ImagePullCredentialsType: SERVICE_ROLE
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+      ServiceRole: !GetAtt CodeBuildProjectRole.Arn
+      Source:
+        BuildSpec: >-
+          {
+            "version": "0.1",
+            "phases": {
+              "build": {
+                "commands": [
+                  'echo "Clone covid_xrays repo"',
+                  'rm -rf $CODEBUILD_EFS1/lambda/covid_xrays ; mkdir -p $CODEBUILD_EFS1/lambda/covid_xrays',
+                  'git clone https://github.com/hosamshahin/covid_xrays.git $CODEBUILD_EFS1/lambda/covid_xrays',
+                  'echo "Create Conda env"',
+                  'rm -rf $CODEBUILD_EFS1/lambda/xrays_env ; conda env create -p $CODEBUILD_EFS1/lambda/xrays_env -f $CODEBUILD_EFS1/lambda/covid_xrays/covid_xrays/environment.yml',
+                  'echo "Changing folder permissions..."',
+                  'chown -R 1000:1000 $CODEBUILD_EFS1/lambda/'
+                ]
+              }
+            }
+          }
+        Type: NO_SOURCE
+      Description: Build covid xray conda environment
+      EncryptionKey: alias/aws/s3
+      FileSystemLocations:
+        - Identifier: efs1
+          Location: !Sub "${FileSystemResource}.efs.us-east-1.amazonaws.com:/"
+          MountOptions: nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2
+          MountPoint: /mnt/python
+          Type: EFS
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+      Name: CodeBuildProject
+      TimeoutInMinutes: 30
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt VPC.DefaultSecurityGroup
+        Subnets:
+          - !Ref MountTargetSubnetOne
+          - !Ref MountTargetSubnetTwo
+        VpcId:
+          Ref: !Ref VPC
 
 Outputs:
   HelloWorldApi:
