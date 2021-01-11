@@ -6,9 +6,6 @@ Parameters:
   EFSpath:
     Type: String
     Default: /mnt/efs
-  BuildImageName:
-    Type: String
-    Default: 114752328202.dkr.ecr.us-east-1.amazonaws.com/continuumio/anaconda3:latest
 
 Resources:
   VPC:
@@ -76,6 +73,54 @@ Resources:
           Permissions: 0777
         Path: /lambda
 
+  COVIDLambdaRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action: elasticfilesystem:ClientMount
+            Condition:
+              StringEquals:
+                elasticfilesystem:AccessPointArn: !Sub arn:${AWS::Partition}:elasticfilesystem:us-east-1:${AWS::AccountId}:access-point/${AccessPointResource}
+            Effect: Allow
+            Resource: "*"
+          - Action: elasticfilesystem:ClientWrite
+            Effect: Allow
+            Resource: !Sub arn:${AWS::Partition}:elasticfilesystem:us-east-1:${AWS::AccountId}:file-system/${AccessPointResource}
+          - Action:
+              - elasticfilesystem:ClientMount
+              - elasticfilesystem:ClientRootAccess
+              - elasticfilesystem:ClientWrite
+              - elasticfilesystem:DescribeMountTargets
+            Effect: Allow
+            Resource: "*"
+        Version: "2012-10-17"
+      PolicyName: COVIDLambdaRolePolicy
+      Roles:
+        - Ref: COVIDLambdaRole
+    DependsOn:
+      - MountTargetResource1
+      - MountTargetResource2
+
+  COVIDLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSXrayWriteOnlyAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AmazonElasticFileSystemClientFullAccess
+    DependsOn:
+      - MountTargetResource1
+      - MountTargetResource2
+
   # COVIDLambda:
   #   Type: AWS::Serverless::Function
   #   Properties:
@@ -98,26 +143,7 @@ Resources:
   #     FileSystemConfigs:
   #       - Arn: !GetAtt AccessPointResource.Arn
   #         LocalMountPath: !Ref EFSpath
-  #     Policies:
-  #       - Statement:
-  #           - Sid: AWSLambdaVPCAccessExecutionRole
-  #             Effect: Allow
-  #             Action:
-  #               - logs:CreateLogGroup
-  #               - logs:CreateLogStream
-  #               - logs:PutLogEvents
-  #               - ec2:CreateNetworkInterface
-  #               - ec2:DescribeNetworkInterfaces
-  #               - ec2:DeleteNetworkInterface
-  #             Resource: "*"
-  #           - Sid: AmazonElasticFileSystemClientFullAccess
-  #             Effect: Allow
-  #             Action:
-  #               - elasticfilesystem:ClientMount
-  #               - elasticfilesystem:ClientRootAccess
-  #               - elasticfilesystem:ClientWrite
-  #               - elasticfilesystem:DescribeMountTargets
-  #             Resource: "*"
+  #     Role: !Ref COVIDLambdaRole
 
   CodeBuildProjectRole:
     Type: AWS::IAM::Role
@@ -159,7 +185,7 @@ Resources:
         Type: NO_ARTIFACTS
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
-        Image: !Ref BuildImageName
+        Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/continuumio/anaconda3:latest
         ImagePullCredentialsType: SERVICE_ROLE
         PrivilegedMode: true
         Type: LINUX_CONTAINER
