@@ -1,11 +1,14 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Sample SAM Template for lambda-vpc
+Description: Sample SAM Template for COVID Xray application
 
 Parameters:
   EFSpath:
     Type: String
     Default: /mnt/efs
+  BuildImageName:
+    Type: String
+    Default: 114752328202.dkr.ecr.us-east-1.amazonaws.com/continuumio/anaconda3:latest
 
 Resources:
   VPC:
@@ -64,75 +67,57 @@ Resources:
     Properties:
       FileSystemId: !Ref FileSystemResource
       PosixUser:
-        Uid: "1000"
-        Gid: "1000"
+        Uid: 1000
+        Gid: 1000
       RootDirectory:
         CreationInfo:
-          OwnerGid: "1000"
-          OwnerUid: "1000"
-          Permissions: "0777"
-        Path: "/myefs"
+          OwnerGid: 1000
+          OwnerUid: 1000
+          Permissions: 0777
+        Path: /lambda
 
-  COVIDlambda:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: covid/
-      Timeout: 3
-      Handler: index.lambda_handler
-      Runtime: nodejs12.x
-      Events:
-        HelloWorld:
-          Type: Api
-          Properties:
-            Path: /hello
-            Method: get
-      VpcConfig:
-        SecurityGroupIds:
-          - !GetAtt VPC.DefaultSecurityGroup
-        SubnetIds:
-          - !Ref MountTargetSubnetOne
-          - !Ref MountTargetSubnetTwo
-      FileSystemConfigs:
-        - Arn: !GetAtt AccessPointResource.Arn
-          LocalMountPath: !Ref EFSpath
-      Policies:
-        - Statement:
-            - Sid: AWSLambdaVPCAccessExecutionRole
-              Effect: Allow
-              Action:
-                - logs:CreateLogGroup
-                - logs:CreateLogStream
-                - logs:PutLogEvents
-                - ec2:CreateNetworkInterface
-                - ec2:DescribeNetworkInterfaces
-                - ec2:DeleteNetworkInterface
-              Resource: "*"
-            - Sid: AmazonElasticFileSystemClientFullAccess
-              Effect: Allow
-              Action:
-                - elasticfilesystem:ClientMount
-                - elasticfilesystem:ClientRootAccess
-                - elasticfilesystem:ClientWrite
-                - elasticfilesystem:DescribeMountTargets
-              Resource: "*"
-
-  CodeBuildProject:
-    Type: AWS::CodeBuild::Project
-    Properties:
-      Name: covid_build
-      Description: Build covid xray conda environment
-      Artifacts:
-        Type: CODEPIPELINE
-      Environment:
-        Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_SMALL
-        Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
-        EnvironmentVariables:
-          - Name: BUILD_OUTPUT_BUCKET
-            Value: !Ref BuildArtifactsBucket
-      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
-      Source:
-        Type: CODEPIPELINE
+  # COVIDLambda:
+  #   Type: AWS::Serverless::Function
+  #   Properties:
+  #     CodeUri: covid/
+  #     Timeout: 3
+  #     Handler: index.lambda_handler
+  #     Runtime: nodejs12.x
+  #     Events:
+  #       HelloWorld:
+  #         Type: Api
+  #         Properties:
+  #           Path: /hello
+  #           Method: get
+  #     VpcConfig:
+  #       SecurityGroupIds:
+  #         - !GetAtt VPC.DefaultSecurityGroup
+  #       SubnetIds:
+  #         - !Ref MountTargetSubnetOne
+  #         - !Ref MountTargetSubnetTwo
+  #     FileSystemConfigs:
+  #       - Arn: !GetAtt AccessPointResource.Arn
+  #         LocalMountPath: !Ref EFSpath
+  #     Policies:
+  #       - Statement:
+  #           - Sid: AWSLambdaVPCAccessExecutionRole
+  #             Effect: Allow
+  #             Action:
+  #               - logs:CreateLogGroup
+  #               - logs:CreateLogStream
+  #               - logs:PutLogEvents
+  #               - ec2:CreateNetworkInterface
+  #               - ec2:DescribeNetworkInterfaces
+  #               - ec2:DeleteNetworkInterface
+  #             Resource: "*"
+  #           - Sid: AmazonElasticFileSystemClientFullAccess
+  #             Effect: Allow
+  #             Action:
+  #               - elasticfilesystem:ClientMount
+  #               - elasticfilesystem:ClientRootAccess
+  #               - elasticfilesystem:ClientWrite
+  #               - elasticfilesystem:DescribeMountTargets
+  #             Resource: "*"
 
   CodeBuildProjectRole:
     Type: AWS::IAM::Role
@@ -145,14 +130,36 @@ Resources:
               Service: codebuild.amazonaws.com
         Version: "2012-10-17"
 
-  LambdaEFSMLCodeBuildProject41BA57A0:
+  CodeBuildProjectPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DeleteNetworkInterface
+              - ec2:DescribeSubnets
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeDhcpOptions
+              - ec2:DescribeVpcs
+            Effect: Allow
+            Resource: "*"
+        Version: "2012-10-17"
+      PolicyName: CodeBuildProjectPolicy
+      Roles:
+        - Ref: CodeBuildProjectRole
+
+  CodeBuildProject:
     Type: AWS::CodeBuild::Project
     Properties:
+      Name: COVIDXrayCodeBuildProject
+      Description: Build covid xray conda environment
       Artifacts:
         Type: NO_ARTIFACTS
       Environment:
-        ComputeType: BUILD_GENERAL1_LARGE
-        Image: lambci/lambda:build-python3.8
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: !Ref BuildImageName
         ImagePullCredentialsType: SERVICE_ROLE
         PrivilegedMode: true
         Type: LINUX_CONTAINER
@@ -169,6 +176,7 @@ Resources:
                   'git clone https://github.com/hosamshahin/covid_xrays.git $CODEBUILD_EFS1/lambda/covid_xrays',
                   'echo "Create Conda env"',
                   'rm -rf $CODEBUILD_EFS1/lambda/xrays_env ; conda env create -p $CODEBUILD_EFS1/lambda/xrays_env -f $CODEBUILD_EFS1/lambda/covid_xrays/covid_xrays/environment.yml',
+                  'rm -f $CODEBUILD_EFS1/lambda/covid_xrays',
                   'echo "Changing folder permissions..."',
                   'chown -R 1000:1000 $CODEBUILD_EFS1/lambda/'
                 ]
@@ -176,7 +184,6 @@ Resources:
             }
           }
         Type: NO_SOURCE
-      Description: Build covid xray conda environment
       EncryptionKey: alias/aws/s3
       FileSystemLocations:
         - Identifier: efs1
@@ -187,7 +194,6 @@ Resources:
       LogsConfig:
         CloudWatchLogs:
           Status: ENABLED
-      Name: CodeBuildProject
       TimeoutInMinutes: 30
       VpcConfig:
         SecurityGroupIds:
@@ -195,16 +201,17 @@ Resources:
         Subnets:
           - !Ref MountTargetSubnetOne
           - !Ref MountTargetSubnetTwo
-        VpcId:
-          Ref: !Ref VPC
-
-Outputs:
-  HelloWorldApi:
-    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
-  HelloWorldFunction:
-    Description: "Hello World Lambda Function ARN"
-    Value: !GetAtt HelloWorldFunction.Arn
-  HelloWorldFunctionIamRole:
-    Description: "Implicit IAM Role created for Hello World function"
-    Value: !GetAtt HelloWorldFunctionRole.Arn
+        VpcId: !Ref VPC
+    DependsOn:
+      - AccessPointResource
+      - CodeBuildProjectPolicy
+# Outputs:
+#   COVIDApi:
+#     Description: "API Gateway endpoint URL for Prod stage for Hello World function"
+#     Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
+#   COVIDLambda:
+#     Description: "Hello World Lambda Function ARN"
+#     Value: !GetAtt COVIDLambda.Arn
+#   COVIDLambdaIamRole:
+#     Description: "Implicit IAM Role created for Hello World function"
+#     Value: !GetAtt COVIDLambdaRole.Arn
