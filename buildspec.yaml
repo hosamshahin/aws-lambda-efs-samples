@@ -1,0 +1,27 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "[Install phase]"
+  pre_build:
+    commands:
+      - echo "[Pre-Build phase]"
+  build:
+    commands:
+      - echo "[Build phase]"
+      - sam package --template-file template.yaml --s3-bucket $BUILD_OUTPUT_BUCKET --output-template-file packaged.yaml
+  post_build:
+    commands:
+      - echo "[Post-Build phase]"
+      - echo "SAM packaging completed on `date`"
+artifacts:
+  files:
+    # list of local files relative to this build environment that will be added to the final artifact (zip)
+    - packaged.yaml
+  discard-paths: yes
+
+cache:
+  paths:
+  # List of path that CodeBuild will upload to S3 Bucket and use in subsequent runs to speed up Builds
+  # - '/root/.cache/pip'
